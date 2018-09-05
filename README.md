@@ -9,7 +9,7 @@ This repo contains the implementation of YOLOv2 in Keras with Tensorflow backend
 - [x] Support python 2.7 and 3.6
 - [ ] Multiple-GPU training
 - [ ] Multiscale training
-- [ ] mAP Evaluation
+- [k] mAP Evaluation (kabrau modifications)
 
 
 ## Kabrau modifications:

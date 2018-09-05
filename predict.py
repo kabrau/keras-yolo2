@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import sys
 import cv2
 import numpy as np
 from tqdm import tqdm
@@ -10,6 +11,10 @@ from utils import draw_boxes
 from frontend import YOLO
 import json
 import xml.etree.ElementTree as ET
+
+sys.path.insert(0, '../mean_average_precision')
+from mean_average_precision.utils.bbox import jaccard
+
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
@@ -66,32 +71,83 @@ def _main_(args):
     #   Predict bounding boxes 
     ###############################
 
+    virar_video = False
+    
+    temporal_predict = True
+    temporal_boxes = []
+
+
     if image_path[-4:] == '.mp4':
         video_out = image_path[:-4] + '_detected' + image_path[-4:]
         video_reader = cv2.VideoCapture(image_path)
 
         nb_frames = int(video_reader.get(cv2.CAP_PROP_FRAME_COUNT))
-        frame_h = int(video_reader.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        frame_w = int(video_reader.get(cv2.CAP_PROP_FRAME_WIDTH))
+        if virar_video:
+            frame_w = int(video_reader.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            frame_h = int(video_reader.get(cv2.CAP_PROP_FRAME_WIDTH))
+        else:
+            frame_h = int(video_reader.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            frame_w = int(video_reader.get(cv2.CAP_PROP_FRAME_WIDTH))
 
-        video_writer = cv2.VideoWriter(video_out,
-                               cv2.VideoWriter_fourcc(*'mp4v'), 
-                               30.0, 
-                               (frame_h, frame_w),True) #(frame_w, frame_h) # Virando video
+        video_writer =  cv2.VideoWriter(video_out,
+                        cv2.VideoWriter_fourcc(*'mp4v'), 
+                        30.0, 
+                        (frame_w, frame_h),True)
 
         for i in tqdm(range(nb_frames)):
             _, image = video_reader.read()
-            image = np.rot90(image,3)
-            image = image.copy() # Fix Bug np.rot90
+            if virar_video:
+                image = np.rot90(image,3)
+                image = image.copy() # Fix Bug np.rot90 
             
             boxes = yolo.predict(image)
-            #image = draw_boxes(image, boxes, config['model']['labels'], 20, 3.5, -90)
+
+            if len(boxes) > 0:
+                raw_height, raw_width, _ = image.shape
+                pred_boxes = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score] for box in boxes])
+
+                for box in boxes:
+                    temporal_boxes.append([i, box.get_label(), box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score ])
+                
+            else:
+                temporal_boxes.append([i])
+
+
+            #temporal_boxes.append(boxes)
+            #temporal_boxes = temporal_boxes[-3:]
+
+            # if len(boxes) > 0:
+            #     raw_height, raw_width, _ = image.shape
+            #     pred_boxes = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score] for box in boxes])
+            #     for box in boxes:
+            #         iou = jaccard(pred_boxes[:,0:4], pred_boxes[:,0:4])
+            #         print(iou)
+                    
+
+            # for box in temporal_boxes[0]:
+            #     image_h, image_w, _ = image.shape
+            #     xmin = int(box.xmin*image_w)
+            #     ymin = int(box.ymin*image_h)
+            #     xmax = int(box.xmax*image_w)
+            #     ymax = int(box.ymax*image_h)
+            #     label = config['model']['labels'][box.get_label()]
+            #     #iou = jaccard(np.array([xmin, ymin, xmax, ymax]), np.array([xmin, ymin, xmax, ymax]))
+            #     #[x1, y1, x2, y2]
+            #     print(label, xmin, ymin, xmax, ymax)
+
             image = draw_boxes(image, boxes, config['model']['labels'], 2, 1.1, -30)
 
             video_writer.write(np.uint8(image))
 
         video_reader.release()
         video_writer.release()  
+
+        for b in temporal_boxes:
+            print(b)
+        tf = np.array(temporal_boxes)
+        np.save("./dados.txt", tf)
+
+
     else:
         image = cv2.imread(image_path)
 
