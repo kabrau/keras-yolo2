@@ -102,13 +102,15 @@ def _main_(args):
             
             boxes = yolo.predict(image)
 
+            subbox = []
             if len(boxes) > 0:
                 raw_height, raw_width, _ = image.shape
-                pred_boxes = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score] for box in boxes])
+                #pred_boxes = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score] for box in boxes])
 
                 for box in boxes:
-                    temporal_boxes.append([i, box.get_label(), box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score ])
+                    subbox.append([box.get_label(), box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score ])
                 
+                temporal_boxes.append([i, subbox, boxes])
             else:
                 temporal_boxes.append([i])
 
