@@ -41,12 +41,24 @@ argparser.add_argument(
     '-a',
     '--annotFile',
     help='annotation File')   
-  
+
+argparser.add_argument(
+    "-s",
+    "--SpatioTemporal", 
+    help="Spatio-Temporal", 
+    action="store_true")  
+
+argparser.add_argument(
+    '-p',
+    '--predictFile',
+    help='predict file (np array format)')       
 
 def _main_(args):
     config_path  = args.conf
     weights_path = args.weights
     image_path   = args.input
+    predict_file = args.predictFile
+    temporal_predict = args.SpatioTemporal
 
     with open(config_path) as config_buffer:    
         config = json.load(config_buffer)
@@ -72,13 +84,17 @@ def _main_(args):
     ###############################
 
     virar_video = False
-    
-    temporal_predict = True
-    temporal_boxes = []
-
 
     if image_path[-4:] == '.mp4':
-        video_out = image_path[:-4] + '_detected' + image_path[-4:]
+
+        predicted_boxes = []
+
+        TEMPORAL_QTD_FRAMES = 10
+        TEMPORAL_MIN_BOXES = 5
+        TEMPORAL_MIN_IOU = 0.1
+        TEMPORAL_MIN_TO_ADD = 3       
+
+        video_out = image_path[:-4] + "_" + config['model']['backend'] +'_detected' + image_path[-4:]
         video_reader = cv2.VideoCapture(image_path)
 
         nb_frames = int(video_reader.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -102,52 +118,26 @@ def _main_(args):
             
             boxes = yolo.predict(image)
 
-            subbox = []
-            if len(boxes) > 0:
-                raw_height, raw_width, _ = image.shape
-                #pred_boxes = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score] for box in boxes])
-
-                for box in boxes:
-                    subbox.append([box.get_label(), box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score ])
-                
-                temporal_boxes.append([i, subbox, boxes])
-            else:
-                temporal_boxes.append([i])
-
-
-            #temporal_boxes.append(boxes)
-            #temporal_boxes = temporal_boxes[-3:]
-
-            # if len(boxes) > 0:
-            #     raw_height, raw_width, _ = image.shape
-            #     pred_boxes = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score] for box in boxes])
-            #     for box in boxes:
-            #         iou = jaccard(pred_boxes[:,0:4], pred_boxes[:,0:4])
-            #         print(iou)
+            if (predict_file):
+                subbox = []
+                if len(boxes) > 0:
+                    raw_height, raw_width, _ = image.shape
+                    for box in boxes:
+                        subbox.append([box.get_label(), box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height, box.score ])
                     
+                    predicted_boxes.append([i, subbox, boxes])
+                else:
+                    predicted_boxes.append([i])
 
-            # for box in temporal_boxes[0]:
-            #     image_h, image_w, _ = image.shape
-            #     xmin = int(box.xmin*image_w)
-            #     ymin = int(box.ymin*image_h)
-            #     xmax = int(box.xmax*image_w)
-            #     ymax = int(box.ymax*image_h)
-            #     label = config['model']['labels'][box.get_label()]
-            #     #iou = jaccard(np.array([xmin, ymin, xmax, ymax]), np.array([xmin, ymin, xmax, ymax]))
-            #     #[x1, y1, x2, y2]
-            #     print(label, xmin, ymin, xmax, ymax)
 
             image = draw_boxes(image, boxes, config['model']['labels'], 2, 1.1, -30)
-
             video_writer.write(np.uint8(image))
 
         video_reader.release()
         video_writer.release()  
 
-        for b in temporal_boxes:
-            print(b)
-        tf = np.array(temporal_boxes)
-        np.save("./dados.txt", tf)
+        if (predict_file):
+            np.save(predict_file, np.array(predicted_boxes))
 
 
     else:
