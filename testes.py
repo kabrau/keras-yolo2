@@ -1,11 +1,27 @@
 import numpy as np
-
+import os
 import sys
 sys.path.insert(0, '../mean_average_precision')
 from mean_average_precision.utils.bbox import jaccard
 
 import operator
+import logging
 
+hasLog = False
+LOG_FILENAME = 'teste.log'
+if os.path.isfile(LOG_FILENAME):
+    os.remove(LOG_FILENAME)
+# logging.basicConfig(filename=LOG_FILENAME,
+#                     format='%(asctime)s %(levelname)-8s %(message)s',
+#                     datefmt='%Y-%m-%d %H:%M:%S',
+#                     level=logging.DEBUG)
+logging.basicConfig(filename=LOG_FILENAME,
+                    level=logging.DEBUG)
+
+def log(*args):
+    if hasLog:
+        msg = ''.join(str(x)+"\t" for x in args)
+        logging.debug(msg)
 
 frames = np.load("./dados.txt.npy")
 
@@ -27,7 +43,11 @@ final_frames = []
 for f1 in range(len(frames)):
 
     frame = frames[f1]
-
+    if len(frame)>1:
+        log('Frame ', f1, 'boxes', len(frame[1]))
+    else:
+        log('Frame ', f1, 'boxes', 0)
+    
     # criando informação que indica se é para manter frame
     if (len(frame)>1):
         for box1 in range(len(frame[1])):
@@ -45,18 +65,13 @@ for f1 in range(len(frames)):
                     #se iou=0 fica ambos boxes, se iou > 0 fica com o de maior score
                     if (iou>0):
                         if (frame[1][box1][POS_SCORE]>frame[1][box2][POS_SCORE]):
+                            if frame[1][box2][POS_OK]:
+                               log('Frame ', f1, 'boxe 2 retirado')
                             frame[1][box2][POS_OK] = False
                         else:
+                            if frame[1][box1][POS_OK]:
+                               log('Frame ', f1, 'boxe 1 retirado')
                             frame[1][box1][POS_OK] = False
-
-        #for box1 in range(len(frame[1])):
-        #    for box2 in range(box1+1,len(frame[1])):
-        #        print(frame[0],box1,box2,
-        #            frame[1][box1][0],frame[1][box1][POS_SCORE],
-        #            frame[1][box2][0],frame[1][box2][POS_SCORE], 
-        #            frame[1][box1][0],frame[1][box1][POS_OK],
-        #            frame[1][box2][0],frame[1][box2][POS_OK], 
-        #            iou)
 
     new_frame = None
 
@@ -76,17 +91,22 @@ for f1 in range(len(frames)):
                                 box_a = np.array([frame[1][box1][1:5]])
                                 box_b = np.array([frame2[1][box2][1:5]])
                                 iou = jaccard(box_a,box_b)
+
                                 if (iou > TEMPORAL_MIN_IOU):
                                     count += 1
+                                    log('Frame ', f1, 'count', count)
                                     if frame2[1][box2][POS_CLASS] in class_dict.keys():
                                         class_dict[frame2[1][box2][POS_CLASS]] += 1
                                     else:
                                         class_dict[frame2[1][box2][POS_CLASS]] = 1
                                         
             if (count > TEMPORAL_MIN_BOXES):
+                if not frame[1][box1][POS_OK]:
+                     log('Frame ', f1, 'boxe 3 adicionado')
                 frame[1][box1][POS_OK] = True
-                #print(frame[0], box1, frame[1][box1][POS_OK], frame[1][box1][POS_CLASS], "=>", final_class, class_dict)
             else:
+                if frame[1][box1][POS_OK]:
+                     log('Frame ', f1, 'boxe 3 retirado')
                 frame[1][box1][POS_OK] = False
             
             final_class = max(class_dict.items(), key=operator.itemgetter(1))[0]
@@ -97,9 +117,12 @@ for f1 in range(len(frames)):
         if (len(last_frames) > TEMPORAL_MIN_TO_ADD):
             if (len(last_frames[-1])>1):
                 new_frame = list(last_frames[-1])
+                log('Frame ', f1, 'box adicionado 4')
 
             elif (len(last_frames[-2])>1):
                 new_frame = list(last_frames[-2])
+                log('Frame ', f1, 'box adicionado 5')
+            
 
     last_frames.append(frame)
     if (len(last_frames)>TEMPORAL_QTD_FRAMES):
@@ -109,6 +132,16 @@ for f1 in range(len(frames)):
         final_frames.append(new_frame)
     else:
         final_frames.append(frame)
+
+
+    boxes = []
+    if len(final_frames[-1])>1:
+        for box1 in range(len(final_frames[-1][1])):
+            if (final_frames[-1][1][box1][POS_OK]):
+                final_frames[-1][2][box1].label = final_frames[-1][1][box1][POS_FINAL_CLASS]
+                boxes.append(final_frames[-1][2][box1])
+
+    log("Frame", f1, "Boxes Finais", len(boxes))
 
 
 # SALVANDO VIDEO
@@ -146,6 +179,8 @@ if (True):
                 if (final_frames[i][1][box1][POS_OK]):
                     final_frames[i][2][box1].label = final_frames[i][1][box1][POS_FINAL_CLASS]
                     boxes.append(final_frames[i][2][box1])
+
+            #print("=>", i,"==", len(boxes))
 
             image = draw_boxes(image, boxes, config['model']['labels'], 2, 1.1, -30)
         video_writer.write(np.uint8(image))

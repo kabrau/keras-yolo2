@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-
 import argparse
 import os
 import sys
@@ -15,6 +14,26 @@ import xml.etree.ElementTree as ET
 sys.path.insert(0, '../mean_average_precision')
 from mean_average_precision.utils.bbox import jaccard
 
+import copy
+import operator
+import logging
+
+
+hasLog = False
+LOG_FILENAME = 'predict.log'
+if os.path.isfile(LOG_FILENAME):
+    os.remove(LOG_FILENAME)
+# logging.basicConfig(filename=LOG_FILENAME,
+#                     format='%(asctime)s %(levelname)-8s %(message)s',
+#                     datefmt='%Y-%m-%d %H:%M:%S',
+#                     level=logging.DEBUG)
+logging.basicConfig(filename=LOG_FILENAME,
+                    level=logging.DEBUG)
+
+def log(*args):
+    if hasLog:
+        msg = ''.join(str(x)+"\t" for x in args)
+        logging.debug(msg)
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
@@ -47,6 +66,12 @@ argparser.add_argument(
     "--SpatioTemporal", 
     help="Spatio-Temporal", 
     action="store_true")  
+
+argparser.add_argument(
+    "-t",
+    "--turnVideo", 
+    help="Turn Video", 
+    action="store_true")     
 
 argparser.add_argument(
     '-p',
@@ -83,22 +108,28 @@ def _main_(args):
     #   Predict bounding boxes 
     ###############################
 
-    virar_video = False
+    turnVideo = args.turnVideo
 
     if image_path[-4:] == '.mp4':
 
         predicted_boxes = []
 
+        last_frames = []
         TEMPORAL_QTD_FRAMES = 10
         TEMPORAL_MIN_BOXES = 5
         TEMPORAL_MIN_IOU = 0.1
-        TEMPORAL_MIN_TO_ADD = 3       
+        TEMPORAL_MIN_TO_ADD = 3
 
-        video_out = image_path[:-4] + "_" + config['model']['backend'] +'_detected' + image_path[-4:]
+        if temporal_predict:
+            video_out = image_path[:-4] + "_" + config['model']['backend'] +'_spatio-temporal' + image_path[-4:]
+        else:
+            video_out = image_path[:-4] + "_" + config['model']['backend'] +'_normal-detected' + image_path[-4:]
+
+
         video_reader = cv2.VideoCapture(image_path)
 
         nb_frames = int(video_reader.get(cv2.CAP_PROP_FRAME_COUNT))
-        if virar_video:
+        if turnVideo:
             frame_w = int(video_reader.get(cv2.CAP_PROP_FRAME_HEIGHT))
             frame_h = int(video_reader.get(cv2.CAP_PROP_FRAME_WIDTH))
         else:
@@ -112,12 +143,119 @@ def _main_(args):
 
         for i in tqdm(range(nb_frames)):
             _, image = video_reader.read()
-            if virar_video:
+            if turnVideo:
                 image = np.rot90(image,3)
                 image = image.copy() # Fix Bug np.rot90 
+
+            raw_height, raw_width, _ = image.shape
             
             boxes = yolo.predict(image)
 
+            log('Frame ', i, 'boxes', len(boxes))
+
+
+            #==================================================
+            # Spatio-Temporal
+            if (temporal_predict):
+
+                # Add information column to valid box (True/False)
+                if len(boxes)>0:
+                    for box in boxes:
+                        box.keeps = True
+                        box.final_class = box.get_label()
+
+                # Verify two or more box in same place
+                for box1 in range(len(boxes)):
+                    for box2 in range(box1+1,len(boxes)):
+                        if (boxes[box1].keeps and boxes[box2].keeps):
+
+                            box = boxes[box1]
+                            box_a = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height]])
+                            box = boxes[box2]
+                            box_b = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height]])
+                            
+                            iou = jaccard(box_a,box_b)
+
+                            #If iou==0, then keeps both, else, keeps the box with the best score
+                            if (iou>0):
+                                if (boxes[box1].get_score()>boxes[box2].get_score()):
+                                    if boxes[box2].keeps:
+                                        log('Frame ', i, 'boxe 2 retirado')
+                                    boxes[box2].keeps = False
+                                else:
+                                    if boxes[box1].keeps:
+                                        log('Frame ', i, 'boxe 1 retirado')
+                                    boxes[box1].keeps = False
+
+                new_boxes = None
+
+                # Verify spatio-temporal of all boxes
+                if len(boxes)>0:
+                    for box in boxes:
+                        if box.keeps:
+                            count = 0
+                            class_dict = { box.get_label() : 1 }
+
+                            if len(last_frames) > 0:
+                                box_a = np.array([[box.xmin*raw_width, box.ymin*raw_height, box.xmax*raw_width, box.ymax*raw_height]])
+                                for last_boxes in last_frames:
+                                    for last_box in last_boxes:
+                                        box_b = np.array([[last_box.xmin*raw_width, last_box.ymin*raw_height, last_box.xmax*raw_width, last_box.ymax*raw_height]])
+                                        iou = jaccard(box_a,box_b)
+                                        
+                                        if (iou > TEMPORAL_MIN_IOU):
+                                            count += 1
+                                            log('Frame ', i, 'count', count)
+                                            if last_box.get_label() in class_dict.keys():
+                                                class_dict[last_box.get_label()] += 1
+                                            else:
+                                                class_dict[last_box.get_label()] = 1
+
+                            if (count <= TEMPORAL_MIN_BOXES):
+                                if box.keeps:
+                                    log('Frame ', i, 'boxe 3 retirado')
+                                box.keeps = False
+                                    
+                            # most used class
+                            final_class = max(class_dict.items(), key=operator.itemgetter(1))[0]
+                            box.final_class = final_class
+
+                else:
+                    if (len(last_frames) > TEMPORAL_MIN_TO_ADD):
+                        if (len(last_frames[-1])>0):
+                            new_boxes = list(last_frames[-1])
+                            log('Frame ', i, 'box adicionado 4')
+
+                        elif (len(last_frames[-2])>0):
+                            new_boxes = list(last_frames[-2])
+                            log('Frame ', i, 'box adicionado 5')
+                           
+
+                # Save last frame
+                last_frames.append(boxes)
+                if (len(last_frames)>TEMPORAL_QTD_FRAMES):
+                    last_frames = last_frames[-TEMPORAL_QTD_FRAMES:]
+
+                # box adjust 
+                tmp_boxes = []
+                if (new_boxes != None):
+                    for box in new_boxes:
+                        if (box.keeps):
+                            b = copy.copy(box)
+                            b.label = box.get_label()
+                            tmp_boxes.append(b)
+                else:
+                    for box in boxes:
+                        if (box.keeps):
+                            b = copy.copy(box)
+                            b.label = box.get_label()
+                            tmp_boxes.append(b)
+
+                boxes = tmp_boxes          
+
+
+            #==================================================
+            # predicted boxes
             if (predict_file):
                 subbox = []
                 if len(boxes) > 0:
@@ -129,6 +267,9 @@ def _main_(args):
                 else:
                     predicted_boxes.append([i])
 
+
+            #==================================================
+            log("Frame", i, "Boxes Finais", len(boxes))
 
             image = draw_boxes(image, boxes, config['model']['labels'], 2, 1.1, -30)
             video_writer.write(np.uint8(image))
