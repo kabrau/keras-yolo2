@@ -176,8 +176,8 @@ def _main_(args):
                             
                             iou = jaccard(box_a,box_b)
 
-                            #If iou==0, then keeps both, else, keeps the box with the best score
-                            if (iou>0):
+                            #If iou <= TEMPORAL_MIN_IOU, then keeps both, else, keeps the box with the best score
+                            if (iou > TEMPORAL_MIN_IOU):
                                 if (boxes[box1].get_score()>boxes[box2].get_score()):
                                     if boxes[box2].keeps:
                                         log('Frame ', i, 'boxe 2 retirado')
