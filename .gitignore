@@ -3,5 +3,6 @@
 *.npy
 __pycache__/*
 /.vscode
-
+/logs
 *.log
+
