@@ -511,7 +511,7 @@ class YOLO(object):
             average_precision  = compute_ap(recall, precision)  
             average_precisions[label] = average_precision
 
-        mAP.myPlot(self.labels)
+        #mAP.myPlot(self.labels)
         plt.show()
 
         return average_precisions, timeHistory    
